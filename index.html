@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Điểm danh</title>
+<style>
+  :root { --tim:#5e35b1; --tim-nhat:#ede7f6; --xanh:#2e7d32; --do:#c62828; --chu:#1f1f24; --phu:#5f6368; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:var(--chu); background:#faf9fc; }
+  main { max-width:440px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .ngay { color:var(--phu); font-size:14px; margin-bottom:16px; min-height:1em; }
+  .the { background:#fff; border:1px solid #e4e0ec; border-radius:12px; padding:16px; margin-bottom:14px; line-height:1.45; }
+  .the.mo { background:var(--tim-nhat); border-color:#d1c4e9; font-weight:600; }
+  .the.canh { background:#fff8e1; border-color:#ffe082; }
+  .nhan { display:block; font-size:14px; color:var(--phu); margin-bottom:6px; }
+  input[type=text] { width:100%; font-size:18px; padding:12px; border:1px solid #cfc8db; border-radius:8px; }
+  .nut { display:block; width:100%; text-align:center; font-size:17px; font-weight:600; padding:14px; border-radius:10px; border:0; cursor:pointer; font-family:inherit; background:var(--tim); color:#fff; }
+  .nut:disabled { opacity:.55; }
+  #ketQua { margin-top:14px; }
+  .kq { padding:14px 16px; border-radius:10px; font-size:16px; line-height:1.45; white-space:pre-line; }
+  .kq.ok { background:#e8f5e9; color:var(--xanh); }
+  .kq.loi { background:#ffebee; color:var(--do); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="tenLop">Điểm danh</h1>
+  <div class="ngay" id="ngay"></div>
+  <div class="the" id="trangThai">Đang tải…</div>
+
+  <div id="form" hidden>
+    <div class="the">
+      <label class="nhan" for="mssv">MSSV</label>
+      <input type="text" id="mssv" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    </div>
+    <button class="nut" id="gui">Điểm danh</button>
+  </div>
+
+  <div id="ketQua"></div>
+</main>
+
+<script>
+var K_TOKEN = 'dd_token', K_MSSV = 'dd_mssv', K_API = 'dd_api';
+var API = null;
+function $(id) { return document.getElementById(id); }
+
+/* Lưu trữ trên trình duyệt: mã thiết bị, MSSV, link máy chủ */
+function docLS(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function ghiLS(k, v) { try { localStorage.setItem(k, v); return localStorage.getItem(k) === v; } catch (e) { return false; } }
+function taoMa() {
+  var a = new Uint8Array(16);
+  crypto.getRandomValues(a);
+  return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+}
+function layToken() {
+  var t = docLS(K_TOKEN);
+  if (t && /^[0-9a-f]{32}$/.test(t)) return t;
+  t = taoMa();
+  return ghiLS(K_TOKEN, t) ? t : null;
+}
+// Xin trình duyệt giữ dữ liệu lâu dài (Chrome, Android)
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+
+function hienKetQua(ok, chu) {
+  var el = $('ketQua');
+  el.className = 'kq ' + (ok ? 'ok' : 'loi');
+  el.textContent = chu;
+}
+function xoaKetQua() { $('ketQua').className = ''; $('ketQua').textContent = ''; }
+function baoLoi(chu) { $('trangThai').className = 'the canh'; $('trangThai').textContent = chu; }
+
+/* Link máy chủ Apps Script: lấy từ mã QR (?api=...), nhớ lại cho lần sau */
+function layApi() {
+  var hopLe = function (u) { return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(u || ''); };
+  var tuQR = null;
+  try { tuQR = new URLSearchParams(location.search).get('api'); } catch (e) {}
+  if (hopLe(tuQR)) { ghiLS(K_API, tuQR); return tuQR; }
+  var daLuu = docLS(K_API);
+  return hopLe(daLuu) ? daLuu : null;
+}
+
+/* Trình duyệt bên trong Zalo, Facebook, Messenger có bộ nhớ riêng nên không dùng */
+function laTrinhDuyetApp() {
+  return /Zalo|FBAN|FBAV|FB_IAB|Messenger|Instagram|Line\//i.test(navigator.userAgent || '');
+}
+
+function goiApi(phuongThuc, duLieu) {
+  var opt = phuongThuc === 'POST'
+    ? { method: 'POST', body: JSON.stringify(duLieu) }   // text/plain: không cần preflight
+    : { method: 'GET' };
+  var url = phuongThuc === 'POST' ? API : API + '?api=trangthai&t=' + Date.now();
+  return fetch(url, opt).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+}
+
+function hienTrangThai(tt) {
+  $('tenLop').textContent = tt.tenLop || 'Điểm danh';
+  $('ngay').textContent = 'Ngày ' + tt.ngay;
+  if (!tt.phien) { $('trangThai').className = 'the'; $('trangThai').textContent = tt.thongBao; return; }
+  $('trangThai').className = 'the mo';
+  $('trangThai').textContent = 'Đang mở điểm danh ' + (tt.phien === 'vao' ? 'VÀO' : 'RA') + ' (' + tt.khung + ')';
+  var m = docLS(K_MSSV);
+  if (m) $('mssv').value = m;
+  $('form').hidden = false;
+}
+
+function khoiDong() {
+  if (laTrinhDuyetApp()) {
+    baoLoi('Bạn đang mở trong Zalo hoặc Facebook. Hãy bấm nút ⋯ hoặc ⋮ ở góc màn hình, chọn "Mở bằng trình duyệt" (Chrome hoặc Safari). Tốt nhất là quét mã bằng ứng dụng Camera.');
+    return;
+  }
+  API = layApi();
+  if (!API) { baoLoi('Không tìm thấy máy chủ điểm danh. Hãy quét lại mã QR dán tại khoa.'); return; }
+  goiApi('GET').then(hienTrangThai).catch(function () {
+    baoLoi('Không kết nối được máy chủ. Kiểm tra mạng rồi tải lại trang.');
+  });
+}
+
+/* Vị trí GPS */
+function layViTri() {
+  return new Promise(function (res) {
+    if (!navigator.geolocation) return res({ loi: 'trình duyệt không hỗ trợ định vị' });
+    navigator.geolocation.getCurrentPosition(
+      function (p) { res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy) }); },
+      function (e) {
+        res({ loi: e.code === 1 ? 'bạn chưa cho phép truy cập vị trí'
+          : e.code === 3 ? 'hết thời gian chờ định vị' : 'không xác định được vị trí' });
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+}
+
+/* Gửi điểm danh */
+$('gui').addEventListener('click', function () {
+  var nut = this;
+  var mssv = $('mssv').value.trim().toUpperCase();
+  if (!mssv) return hienKetQua(false, 'Bạn chưa nhập MSSV.');
+  var token = layToken();
+  if (!token) return hienKetQua(false, 'Trình duyệt không lưu được dữ liệu. Hãy mở bằng Chrome hoặc Safari ở chế độ thường (không ẩn danh).');
+  xoaKetQua();
+  nut.disabled = true; nut.textContent = 'Đang lấy vị trí…';
+  layViTri().then(function (vt) {
+    nut.textContent = 'Đang gửi…';
+    var goi = { mssv: mssv, token: token };
+    if (vt && typeof vt.lat === 'number') { goi.lat = vt.lat; goi.lng = vt.lng; goi.acc = vt.acc; }
+    else if (vt && vt.loi) goi.gpsLoi = vt.loi;
+    return goiApi('POST', goi);
+  }).then(function (kq) {
+    nut.disabled = false; nut.textContent = 'Điểm danh';
+    if (kq.ok) {
+      ghiLS(K_MSSV, mssv);
+      $('form').hidden = true;
+      hienKetQua(true, kq.thongBao + (kq.ten ? '\n' + kq.ten : ''));
+    } else {
+      hienKetQua(false, kq.thongBao);
+    }
+  }).catch(function (e) {
+    nut.disabled = false; nut.textContent = 'Điểm danh';
+    hienKetQua(false, 'Lỗi kết nối (' + (e && e.message ? e.message : e) + '). Hãy thử lại.');
+  });
+});
+
+khoiDong();
+</script>
+</body>
+</html>
