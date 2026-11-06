@@ -21,6 +21,7 @@
   .nut:disabled { opacity:.55; }
   #ketQua { margin-top:14px; }
   .kq { padding:14px 16px; border-radius:10px; font-size:16px; line-height:1.45; white-space:pre-line; }
+  .kq .hd { margin-top:10px; padding-top:10px; border-top:1px solid #f3c1c1; color:var(--chu); font-size:15px; }
   .kq.ok { background:#e8f5e9; color:var(--xanh); }
   .kq.loi { background:#ffebee; color:var(--do); }
   [hidden] { display:none !important; }
@@ -69,6 +70,14 @@ function hienKetQua(ok, chu) {
   var el = $('ketQua');
   el.className = 'kq ' + (ok ? 'ok' : 'loi');
   el.textContent = chu;
+}
+function hienLoiViTri(chu, hd) {
+  var el = $('ketQua');
+  el.className = 'kq loi';
+  el.textContent = chu;
+  var d = document.createElement('div');
+  d.className = 'hd'; d.textContent = hd;
+  el.appendChild(d);
 }
 function xoaKetQua() { $('ketQua').className = ''; $('ketQua').textContent = ''; }
 function baoLoi(chu) { $('trangThai').className = 'the canh'; $('trangThai').textContent = chu; }
@@ -122,18 +131,49 @@ function khoiDong() {
   });
 }
 
-/* Vị trí GPS */
+/* Vị trí GPS: theo dõi tối đa 15 giây, giữ lần đo chính xác nhất */
 function layViTri() {
   return new Promise(function (res) {
-    if (!navigator.geolocation) return res({ loi: 'trình duyệt không hỗ trợ định vị' });
-    navigator.geolocation.getCurrentPosition(
-      function (p) { res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy) }); },
-      function (e) {
-        res({ loi: e.code === 1 ? 'bạn chưa cho phép truy cập vị trí'
-          : e.code === 3 ? 'hết thời gian chờ định vị' : 'không xác định được vị trí' });
+    if (!navigator.geolocation) return res({ loi: 'trình duyệt không hỗ trợ định vị', ma: 0 });
+    var tot = null, xong = false, id = null, hen = null;
+    function ket(kq) {
+      if (xong) return; xong = true;
+      if (id !== null) navigator.geolocation.clearWatch(id);
+      clearTimeout(hen); res(kq);
+    }
+    id = navigator.geolocation.watchPosition(
+      function (p) {
+        var vt = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
+        if (!tot || vt.acc < tot.acc) tot = vt;
+        if (tot.acc <= 50) ket(tot);
       },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+      function (e) {
+        if (e.code === 1) return ket({ loi: 'bạn chưa cho phép truy cập vị trí', ma: 1 });
+        if (tot) return ket(tot);
+        if (e.code !== 3) ket({ loi: 'không xác định được vị trí', ma: e.code });
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+    hen = setTimeout(function () { ket(tot || { loi: 'hết thời gian chờ định vị', ma: 3 }); }, 15000);
   });
+}
+
+/* Hướng dẫn bật vị trí theo loại máy */
+var laIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+var laChromeIOS = /CriOS/i.test(navigator.userAgent);
+function huongDan(loai) {
+  var app = laIOS ? (laChromeIOS ? 'Chrome' : 'Trang web Safari') : 'Chrome';
+  if (loai === 'ganDung') {
+    return laIOS
+      ? 'Điện thoại đang tắt Vị trí chính xác. Vào Cài đặt → Quyền riêng tư & Bảo mật → Dịch vụ định vị → ' + app + ' → bật "Vị trí chính xác". Sau đó quay lại bấm Điểm danh.'
+      : 'Điện thoại đang tắt Vị trí chính xác. Vào Cài đặt → Ứng dụng → Chrome → Quyền → Vị trí → bật "Dùng vị trí chính xác". Sau đó quay lại bấm Điểm danh.';
+  }
+  return laIOS
+    ? 'Cách bật: (1) Cài đặt → Quyền riêng tư & Bảo mật → Dịch vụ định vị: bật; kéo xuống ' + app + ' → chọn "Khi dùng ứng dụng" và bật "Vị trí chính xác". ' +
+      (laChromeIOS ? '' : '(2) Trong Safari, bấm biểu tượng "aA" ở thanh địa chỉ → Cài đặt trang web → Vị trí → Cho phép. ') +
+      'Sau đó tải lại trang và bấm Điểm danh, khi được hỏi chọn Cho phép.'
+    : 'Cách bật: (1) Kéo thanh thông báo xuống, bật Vị trí. (2) Trong Chrome, bấm biểu tượng bên trái thanh địa chỉ → Quyền (hoặc Cài đặt trang web) → Vị trí → Cho phép. ' +
+      '(3) Nếu vẫn lỗi: Cài đặt → Ứng dụng → Chrome → Quyền → Vị trí → "Chỉ cho phép khi đang dùng ứng dụng" và bật "Dùng vị trí chính xác". Sau đó tải lại trang.';
 }
 
 /* Gửi điểm danh */
@@ -144,8 +184,10 @@ $('gui').addEventListener('click', function () {
   var token = layToken();
   if (!token) return hienKetQua(false, 'Trình duyệt không lưu được dữ liệu. Hãy mở bằng Chrome hoặc Safari ở chế độ thường (không ẩn danh).');
   xoaKetQua();
-  nut.disabled = true; nut.textContent = 'Đang lấy vị trí…';
+  nut.disabled = true; nut.textContent = 'Đang lấy vị trí (tối đa 15 giây)…';
+  var viTri = null;
   layViTri().then(function (vt) {
+    viTri = vt;
     nut.textContent = 'Đang gửi…';
     var goi = { mssv: mssv, token: token };
     if (vt && typeof vt.lat === 'number') { goi.lat = vt.lat; goi.lng = vt.lng; goi.acc = vt.acc; }
@@ -157,6 +199,10 @@ $('gui').addEventListener('click', function () {
       ghiLS(K_MSSV, mssv);
       $('form').hidden = true;
       hienKetQua(true, kq.thongBao + (kq.ten ? '\n' + kq.ten : ''));
+    } else if (viTri && viTri.loi) {
+      hienLoiViTri(kq.thongBao, huongDan('tuChoi'));
+    } else if (viTri && viTri.acc > 200 && /cách khoa/.test(kq.thongBao)) {
+      hienLoiViTri('Vị trí điện thoại gửi lên chỉ là vị trí gần đúng (sai số khoảng ' + viTri.acc + ' m).', huongDan('ganDung'));
     } else {
       hienKetQua(false, kq.thongBao);
     }
